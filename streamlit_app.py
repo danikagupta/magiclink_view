@@ -309,6 +309,7 @@ def page4():
         break
     st.dataframe(transcripts)
 
+aaa="""
 tab1,tab2,tab3,tab4=st.tabs(["Magic link","YT Video","Chat","View"])
 with tab1:
     page1()
@@ -318,3 +319,10 @@ with tab3:
     page3()
 with tab4:
     page4()
+"""
+
+pg = st.navigation([st.Page(page1,title="Magic Link"), 
+                    st.Page(page2,title="YT video upload"), 
+                    st.Page(page3, title="Chat"), 
+                    st.Page(page4,title="Debug")])
+pg.run()
