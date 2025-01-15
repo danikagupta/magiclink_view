@@ -89,6 +89,8 @@ def convert_time_to_ms(time_str: str) -> int:
 
 def parse_transcript_text(caption_data: str) -> List[Dict[str, Union[str, int]]]:
     list_transcript = []
+    MIN_GAP=30*1000
+    last_published= 0 - MIN_GAP*2;
     
     for block in caption_data.strip().split("\n\n"):
         lines = block.split("\n")
@@ -101,13 +103,13 @@ def parse_transcript_text(caption_data: str) -> List[Dict[str, Union[str, int]]]
             # Extract timing
             timing = lines[0]
             start_time, end_time = timing.split(",")
-            start_time = convert_time_to_ms(start_time)
-            end_time = convert_time_to_ms(end_time)
-            
-            #list_transcript.append({"text": text, "start": start_time, "end": end_time})
-            # Temp remove timestamp to cut the transcript size
-            list_transcript.append({"text": text})
-    
+            start_time_ms = convert_time_to_ms(start_time)
+            if start_time_ms-last_published>MIN_GAP:
+                list_transcript.append(f"<Timestamp: {start_time}>")
+                last_published=start_time_ms
+            list_transcript.append(text)
+
+    list_transcript.append(f"<Timestamp: {end_time}>")
     return list_transcript
 
 def get_transcript(video_id: str) -> List[Dict[str, Union[str, int]]]:
@@ -192,7 +194,7 @@ def work_with_yt(yt_url):
         st.session_state['videos']=[]
     if video_id not in st.session_state['videos']:
         st.session_state['videos'].append(video_id)
-    st.session_state[str(video_id)]=transcript
+    st.session_state[str(video_id)]="\n".join(transcript)
     lsize=len(transcript)
     chars=len(str(transcript))
     st.write(f"Saw {lsize} segments totalling {chars} characters")
