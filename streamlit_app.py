@@ -205,7 +205,34 @@ def work_with_yt(yt_url):
     #print(f"EYV: {eyv}")
     #st.dataframe(eyv)
 
+def extract_ml_content_video(rsp_json):
+    sessions=rsp_json['data']['sessions']
+    first_video=sessions[0]['youtube_link']
+    if isinstance(first_video, list):
+        first_video=first_video[0]
+    new_list=[]
+    for sess in sessions:
+        new_list.append({"date":sess['session_date'],"summary":sess['session_summary']})
 
+    #st.write(f"Sessions: {new_list}")
+    #st.write(f"First video: {first_video}")
+    return new_list, first_video
+
+def process_ml(link_id):
+    #link_id="67cc29bf-798c-487b-93a0-ec96f9bd6a4c"
+    req_url=SRC_URL+link_id
+    #st.header(f"Magic link: {req_url}")
+    response=requests.get(req_url)
+    #st.write(f"Status code: {response.status_code}")
+    rsp_json=json.loads(response.text)
+    mlc,fyv=extract_ml_content_video(rsp_json)
+    video_id=get_video_id_from_url(fyv)
+    video_transcript=get_transcript(video_id)
+    with st.expander("ML data"):
+        st.write(str(mlc))
+    with st.expander("Video transcript"):
+        st.write(str(video_transcript))
+    chat_with_transcript_history(str(video_transcript),str(mlc))
 
 def page1():
     if 'magiclink' in st.session_state:
@@ -214,7 +241,7 @@ def page1():
         mg_init=""
 
     st.write(f"Sample magic link: 67cc29bf-798c-487b-93a0-ec96f9bd6a4c")
-    mg=extract_magic_link(st.text_input("Magic Link", value=mg_init))
+    mg=extract_magic_link(st.sidebar.text_input("Type in Magic Link (aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)", value=mg_init))
 
     #print(f"mg is {mg}")
     #print(f"Length is {len(mg)}")
@@ -222,7 +249,7 @@ def page1():
         st.write("Enter magic link first!!")
     else:
         #st.header(f"Magic link: **{mg}**")
-        work_with_ml(mg)
+        process_ml(mg)
 
 def page2():
     if 'yt_url' in st.session_state:
@@ -238,10 +265,12 @@ def page2():
     else:
         work_with_yt(yt)
 
-def create_llm_message(prompt:str, tr:str, messages:List):
+def create_llm_message(prompt:str, tr:str, history:str, messages:List):
   llm_msg=[]
   llm_msg.append(SystemMessage(content=prompt))
   llm_msg.append(SystemMessage(content=f"Transcript: {tr}"))
+  if(len(history)>1):
+      llm_msg.append(SystemMessage(content=f"History: {history}"))
   for msg in messages:
     if msg["role"]=="user":
         llm_msg.append(HumanMessage(content=msg['content']))
@@ -249,7 +278,7 @@ def create_llm_message(prompt:str, tr:str, messages:List):
         llm_msg.append(AIMessage(content=msg['content']))
   return llm_msg
 
-def chat_with_transcript(tr):
+def chat_with_transcript_history(tr,history=""):
     encoding = tiktoken.get_encoding("cl100k_base")
     tokens = encoding.encode(tr)
     num_tokens = len(tokens)
@@ -275,7 +304,7 @@ def chat_with_transcript(tr):
             
     if prompt := st.chat_input("Ask about this session"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        llm_msg=create_llm_message(SYSTEM_PROMPT,tr,st.session_state.messages)
+        llm_msg=create_llm_message(SYSTEM_PROMPT,tr,history,st.session_state.messages)
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant", avatar=avatars["assistant"]):
@@ -294,7 +323,7 @@ def page3():
     for video in videolist:
         transcript_combined = transcript_combined + str(st.session_state[str(video)])
     #st.sidebar.write(f" Transcript char count: {len(transcript_combined)}")
-    chat_with_transcript(transcript_combined)
+    chat_with_transcript_history(transcript_combined,"")
 
 def page4():
     st.header("View")
@@ -308,6 +337,23 @@ def page4():
         print(f"Video section #1: {videosection}")
         break
     st.dataframe(transcripts)
+
+def page5():
+    if 'magiclink' in st.session_state:
+        mg_init=st.session_state['magiclink']
+    else:
+        mg_init=""
+
+    st.write(f"Sample magic link: 67cc29bf-798c-487b-93a0-ec96f9bd6a4c")
+    mg=extract_magic_link(st.text_input("Magic Link", value=mg_init))
+
+    #print(f"mg is {mg}")
+    #print(f"Length is {len(mg)}")
+    if mg is None or len(mg)<1:
+        st.write("Enter magic link first!!")
+    else:
+        #st.header(f"Magic link: **{mg}**")
+        work_with_ml(mg)
 
 aaa="""
 tab1,tab2,tab3,tab4=st.tabs(["Magic link","YT Video","Chat","View"])
@@ -324,5 +370,6 @@ with tab4:
 pg = st.navigation([st.Page(page1,title="Magic Link"), 
                     st.Page(page2,title="YT video upload"), 
                     st.Page(page3, title="Chat"), 
-                    st.Page(page4,title="Debug")])
+                    st.Page(page4,title="Debug - YT"),
+                    st.Page(page5,title="Debug - MagicLink")])
 pg.run()
