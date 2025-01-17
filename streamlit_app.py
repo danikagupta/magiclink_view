@@ -19,6 +19,9 @@ from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage, AIM
 import os
 from pathlib import Path
 
+import json
+from datetime import datetime
+
 os.environ["LANGCHAIN_TRACING_V2"]="true"
 os.environ["LANGCHAIN_API_KEY"]=st.secrets['LANGCHAIN_API_KEY']
 os.environ["LANGCHAIN_PROJECT"]="SessionAthena"
@@ -205,9 +208,23 @@ def work_with_yt(yt_url):
     #print(f"EYV: {eyv}")
     #st.dataframe(eyv)
 
+def get_latest_video(sessions):
+    latest_session = max(sessions, key=lambda s: datetime.fromisoformat(s["session_date"].replace("Z", "+00:00")))
+    latest_info = {
+        "session_date": latest_session["session_date"],
+        "youtube_link": latest_session.get("youtube_link", []),
+        "instructor_names": latest_session.get("instructor_names", []),
+        "session_summary": latest_session.get("session_summary", []),
+        "project_name": latest_session.get("project_name", ""),
+        "time_zone": latest_session.get("time_zone", "")
+    }
+    print(f"Latest session: {latest_info['session_date']} ")
+    return latest_info
+
 def extract_ml_content_video(rsp_json):
     sessions=rsp_json['data']['sessions']
-    first_video=sessions[0]['youtube_link']
+    latest_session=get_latest_video(sessions)
+    first_video=latest_session['youtube_link']
     if isinstance(first_video, list):
         first_video=first_video[0]
     new_list=[]
@@ -229,9 +246,9 @@ def process_ml(link_id):
     video_id=get_video_id_from_url(fyv)
     video_transcript=get_transcript(video_id)
     with st.expander("ML data"):
-        st.write(str(mlc))
+        st.dataframe(mlc,hide_index=False)
     with st.expander("Video transcript"):
-        st.write(str(video_transcript))
+        st.dataframe(video_transcript)
     chat_with_transcript_history(str(video_transcript),str(mlc))
 
 def page1():
@@ -284,8 +301,12 @@ def chat_with_transcript_history(tr,history=""):
     num_tokens = len(tokens)
 
     SYSTEM_PROMPT=f"""
-    You are a helpful session analysis coach. What follows is an educational discussion 
-    between teacher and student. Please answer users' questions as well as you can. 
+    You are a helpful and thoughtful session analysis coach who double-checks their work. 
+    What follows is an educational discussion between teacher and student. 
+    Please answer users' questions as well as you can. 
+
+    You can assume that we have the full list of all of student's sessions here.
+    Please count carefully - double-count if needed.
     """
 
     avatars={"system":"💻🧠","user":"🧑‍💼","assistant":"🎓"}
