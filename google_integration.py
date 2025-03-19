@@ -1,101 +1,153 @@
-import streamlit as st
+"""Google API integration for YouTube transcript retrieval.
 
+This module handles authentication with Google APIs and provides functionality
+to fetch and parse YouTube video transcripts.
+"""
+
+import streamlit as st
+import json
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-
 from typing import List, Dict, Union
 import googleapiclient.discovery
-
 from pathlib import Path
 
 def get_google_creds(credential_file_path: str) -> Credentials:
-    creds = None
-    #
-    # Kludge!!
-    #
-    filepath=Path(credential_file_path)
-    if filepath.exists():
-        print(f"File path {credential_file_path} exists")
-    else:
-        print(f"Creating file: {credential_file_path}")
-        refresh_token=st.secrets['refresh_token']
-        token_uri=st.secrets['token_uri']
-        client_id=st.secrets['client_id']
-        client_secret=st.secrets['client_secret']
-        scopes=st.secrets['scopes']
-        content="{"+f"""
+    """Get or create Google API credentials.
 
-    "refresh_token": "{refresh_token}",
-    "token_uri": "{token_uri}",
-    "client_id": "{client_id}",
-    "client_secret": "{client_secret}",
-    "scopes": {scopes}
-  
-        """+"}"
+    Args:
+        credential_file_path: Path to the credentials JSON file
+
+    Returns:
+        Valid Google API credentials object
+    """
+    filepath = Path(credential_file_path)
+    
+    # Create credentials file if it doesn't exist
+    if not filepath.exists():
+        print(f"Creating credentials file: {credential_file_path}")
+        # Parse scopes from string to proper JSON array
+        scopes = json.loads(st.secrets['scopes'])
+        
+        credentials_data = {
+            "refresh_token": st.secrets['refresh_token'],
+            "token_uri": st.secrets['token_uri'],
+            "client_id": st.secrets['client_id'],
+            "client_secret": st.secrets['client_secret'],
+            "scopes": scopes
+        }
+        
+        content = json.dumps(credentials_data, indent=2)
         filepath.write_text(content)
+    else:
+        print(f"Using existing credentials from: {credential_file_path}")
 
-    creds = Credentials.from_authorized_user_file(credential_file_path)
-    if not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+    # Load and validate credentials
+    credentials = Credentials.from_authorized_user_file(credential_file_path)
+    if not credentials.valid and credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
 
-    return creds
+    return credentials
 
+def get_transcript(video_id: str) -> List[str]:
+    """Fetch and parse the transcript for a YouTube video.
 
-def get_transcript(video_id: str) -> List[Dict[str, Union[str, int]]]:
-    api_service_name = "youtube"
-    api_version = "v3"
-    auth_location = "my2credentials.json"
+    Args:
+        video_id: YouTube video ID to fetch transcript for
 
-    credentials = get_google_creds(auth_location)
+    Returns:
+        List of transcript segments with timestamps
 
-    youtube = googleapiclient.discovery.build(
-        api_service_name, api_version, credentials=credentials
+    Raises:
+        Exception: If no English transcript is available
+    """
+    # Initialize YouTube API client
+    API_SERVICE_NAME = "youtube"
+    API_VERSION = "v3"
+    AUTH_FILE = "my2credentials.json"
+
+    credentials = get_google_creds(AUTH_FILE)
+    youtube_client = googleapiclient.discovery.build(
+        API_SERVICE_NAME, 
+        API_VERSION, 
+        credentials=credentials
     )
 
-    response = youtube.captions().list(part="id,snippet", videoId=video_id).execute()
+    # Get available captions
+    captions_response = youtube_client.captions().list(
+        part="id,snippet", 
+        videoId=video_id
+    ).execute()
 
+    # Find English caption ID
     caption_id = None
-    for item in response.get("items", []):
+    for item in captions_response.get("items", []):
         if item["snippet"]["language"] == "en":
             caption_id = item["id"]
             break
 
     if not caption_id:
-        raise Exception("Transcript is not available")
+        raise Exception("No English transcript available for this video")
 
-    caption_response = youtube.captions().download(id=caption_id).execute()
-    caption_data = caption_response.decode("utf-8")
-    list_transcript = parse_transcript_text(caption_data)
+    # Download and parse transcript
+    caption_response = youtube_client.captions().download(
+        id=caption_id
+    ).execute()
+    caption_text = caption_response.decode("utf-8")
     
-    return list_transcript
+    return parse_transcript_text(caption_text)
 
 def convert_time_to_ms(time_str: str) -> int:
-    h, m, s, ms = time_str.replace(".", ":").split(":")
-    ms_time = (int(h) * 3600 + int(m) * 60 + int(s)) * 1000 + int(ms)
-    return ms_time
+    """Convert timestamp string to milliseconds.
 
-def parse_transcript_text(caption_data: str) -> List[Dict[str, Union[str, int]]]:
-    list_transcript = []
-    MIN_GAP=30*1000
-    last_published= 0 - MIN_GAP*2;
+    Args:
+        time_str: Timestamp in format 'HH:MM:SS.mmm'
+
+    Returns:
+        Time in milliseconds
+    """
+    hours, minutes, seconds, milliseconds = time_str.replace(".", ":").split(":")
+    total_ms = (
+        int(hours) * 3600000 +
+        int(minutes) * 60000 +
+        int(seconds) * 1000 +
+        int(milliseconds)
+    )
+    return total_ms
+
+def parse_transcript_text(caption_data: str) -> List[str]:
+    """Parse YouTube caption data into transcript segments.
+
+    Args:
+        caption_data: Raw caption data from YouTube API
+
+    Returns:
+        List of transcript segments with timestamps at regular intervals
+    """
+    transcript_segments = []
+    MIN_GAP_MS = 30 * 1000  # 30 seconds in milliseconds
+    last_timestamp_ms = -2 * MIN_GAP_MS
     
+    # Process caption blocks
     for block in caption_data.strip().split("\n\n"):
         lines = block.split("\n")
         if len(lines) >= 2:
-            # Extract text
             text = lines[1]
-            if text == "e":
+            if text == "e":  # Skip empty segments
                 continue
             
-            # Extract timing
+            # Parse timing information
             timing = lines[0]
             start_time, end_time = timing.split(",")
-            start_time_ms = convert_time_to_ms(start_time)
-            if start_time_ms-last_published>MIN_GAP:
-                list_transcript.append(f"<Timestamp: {start_time}>")
-                last_published=start_time_ms
-            list_transcript.append(text)
+            current_time_ms = convert_time_to_ms(start_time)
+            
+            # Add timestamp if enough time has passed
+            if current_time_ms - last_timestamp_ms > MIN_GAP_MS:
+                transcript_segments.append(f"<Timestamp: {start_time}>")
+                last_timestamp_ms = current_time_ms
+                
+            transcript_segments.append(text)
 
-    list_transcript.append(f"<Timestamp: {end_time}>")
-    return list_transcript
+    # Add final timestamp
+    transcript_segments.append(f"<Timestamp: {end_time}>")
+    return transcript_segments
